@@ -48,23 +48,31 @@ class GetDB:
     def coreProcessingSelect() -> str:
         select = """select document_id, core_processing_start, action_id
                     from mdlp_meta.outcome_documents where doc_status in ('CORE_PROCESSING_DOCUMENT')
-                    and doc_date::date = current_date and action_id not in (511, 10511);"""
+                    and doc_date::date = current_date and action_id not in (10511);"""
         return select
 
     @staticmethod
     def uploadingSelect() -> str:
-        select = """select count(*) from mdlp_meta.outcome_documents where doc_status in ('UPLOADING_DOCUMENT')
+        select = """select document_id, doc_date, action_id from mdlp_meta.outcome_documents where doc_status in ('UPLOADING_DOCUMENT')
                     and doc_date::date = current_date and link not ilike '%/opt/gluster%';"""
         return select
 
+    @staticmethod
+    def fourErrorDesc():
+        select = """select document_id, doc_date, action_id
+                    from mdlp_meta.outcome_documents
+                    where doc_business_error_desc ilike '%Некорректная операция (операция не может быть выполнена для указанных реквизитов)%'
+                    and doc_date::date = current_date;"""
+        return select
 
-def message(role, color, status, data) -> dict:
+
+def message(role, color, status, data, dataCount) -> dict:
     return {
         "color": color,
-        "text": f"{role} Документы в статусе \'{status}\' более 30 минту!\n",
+        "text": f":boom: {role} Документы в статусе \'{status}\' более 1 часа ({dataCount} шт.)!\n",
         "attachments": [
             {
-                "color": "#e60000",
+                "color": color,
                 "text": data
             }
         ]
@@ -73,21 +81,8 @@ def message(role, color, status, data) -> dict:
 
 def attachBuilder(fetchArray: list, idArray: list):
     for row in fetchArray:
-        if row[1] < (datetime.now() - timedelta(minutes=30)):
+        if row[1] < (datetime.now() - timedelta(hours=1)):
             idArray.append(f'xml_doc_id: {row[0]}, action_id: {row[2]}\n')
-
-
-def uploadingMessage(role, color, status, data) -> dict:
-    return {
-        "color": color,
-        "text": f"{role} Документы в статусе \'{status}\' с начала дня!\n",
-        "attachments": [
-            {
-                "color": "#e60000",
-                "text": data
-            }
-        ]
-    }
 
 
 if __name__ == '__main__':
@@ -95,6 +90,8 @@ if __name__ == '__main__':
     while True:
         coreProcessedIdArray = []
         coreProcessingIdArray = []
+        uploadingArray = []
+        fourErrorArray = []
         connect = db.connection()
         curs = connect.cursor()
         try:
@@ -103,25 +100,35 @@ if __name__ == '__main__':
             if len(coreProcessedIdArray) != 0:
                 requests.post(os.environ['HOOK_URL'], json=message(
                         '[ALERT]',
-                        "#0040ff",
+                        '#FF0000',
                         'CORE_PROCESSED_DOCUMENT',
-                        ''.join(coreProcessedIdArray))
+                        ''.join(coreProcessedIdArray), len(coreProcessedIdArray))
                               )
             curs.execute(db.coreProcessingSelect())
             attachBuilder(curs.fetchall(), coreProcessingIdArray)
             if len(coreProcessingIdArray) != 0:
                 requests.post(os.environ['HOOK_URL'], json=message(
                         '[ALERT]',
-                        "#0040ff",
+                        '#FF0000',
                         'CORE_PROCESSING_DOCUMENT',
-                        ''.join(coreProcessingIdArray))
+                        ''.join(coreProcessingIdArray), len(coreProcessingIdArray))
                               )
             curs.execute(db.uploadingSelect())
-            requests.post(os.environ['HOOK_URL'], json=uploadingMessage(
+            attachBuilder(curs.fetchall(), uploadingArray)
+            if len(uploadingArray) != 0:
+                requests.post(os.environ['HOOK_URL'], json=message(
                         '[ALERT]',
-                        "#0040ff",
+                        '#FF0000',
                         'UPLOADING_DOCUMENT',
-                        f'Количество документов: {str(*curs.fetchone())}')
+                        ''.join(uploadingArray), len(uploadingArray))
+                              )
+            attachBuilder(curs.fetchall(), fourErrorArray)
+            if len(fourErrorArray) != 0:
+                requests.post(os.environ['HOOK_URL'], json=message(
+                        '[ALERT]',
+                        '#FF0000',
+                        'Ошибка 4',
+                        ''.join(fourErrorArray), len(fourErrorArray))
                               )
         except Exception as err:
             print(err)
