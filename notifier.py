@@ -41,14 +41,14 @@ class GetDB:
     def coreProcessedSelect() -> str:
         select = f"""select document_id, core_processing_end, action_id
                      from mdlp_meta.outcome_documents where doc_status in ('CORE_PROCESSED_DOCUMENT')
-                     and doc_date::date = current_date and action_id not in (10511);"""
+                     and doc_date::date = current_date and action_id not in (511, 10511);"""
         return select
 
     @staticmethod
     def coreProcessingSelect() -> str:
         select = """select document_id, core_processing_start, action_id
                     from mdlp_meta.outcome_documents where doc_status in ('CORE_PROCESSING_DOCUMENT')
-                    and doc_date::date = current_date and action_id not in (10511);"""
+                    and doc_date::date = current_date and action_id not in (511, 10511);"""
         return select
 
     @staticmethod
@@ -69,7 +69,7 @@ class GetDB:
 def message(role, color, status, data, dataCount) -> dict:
     return {
         "color": color,
-        "text": f":boom: {role} Документы в статусе \'{status}\' более 1 часа ({dataCount} шт.)!\n",
+        "text": f":boom: {role} Обнаружены документы в статусе \'{status}\' более 1 часа в количестве {dataCount} шт.\n",
         "attachments": [
             {
                 "color": color,
@@ -82,7 +82,10 @@ def message(role, color, status, data, dataCount) -> dict:
 def attachBuilder(fetchArray: list, idArray: list):
     for row in fetchArray:
         if row[1] < (datetime.now() - timedelta(hours=1)):
-            idArray.append(f'xml_doc_id: {row[0]}, action_id: {row[2]}\n')
+            if row[2]:
+                idArray.append(f'xml_doc_id: {row[0]}, action_id: {row[2]}\n')
+            else:
+                idArray.append(f'xml_doc_id: {row[0]}\n')
 
 
 if __name__ == '__main__':
@@ -122,6 +125,7 @@ if __name__ == '__main__':
                         'UPLOADING_DOCUMENT',
                         ''.join(uploadingArray), len(uploadingArray))
                               )
+            curs.execute(db.fourErrorDesc())
             attachBuilder(curs.fetchall(), fourErrorArray)
             if len(fourErrorArray) != 0:
                 requests.post(os.environ['HOOK_URL'], json=message(
