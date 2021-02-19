@@ -195,7 +195,6 @@ def resolving():
     dataBase = GetDB('mdlp_db')
     while True:
         print('Resolving started')
-        print(len(identifiersArray))
         if not docQueue.empty():
             for item in range(docQueue.qsize()):
                 identifiersArray.add(docQueue.get())
@@ -205,7 +204,7 @@ def resolving():
             curs = connect.cursor()
             resolvArray = []
             try:
-                for item in identifiersArray:
+                for item in list(identifiersArray):
                     curs.execute(dataBase.resolvSelect(item))
                     row = curs.fetchone()
                     if row:
@@ -218,7 +217,8 @@ def resolving():
                 connect.close()
             if len(resolvArray) > 0:
                 requests.post(os.environ['HOOK_URL'], json=message(
-                        f':white_check_mark: [RESOLVED] Обработано документов {len(resolvArray)}. Осталось обработать {len(identifiersArray)}',
+                        f':white_check_mark: [RESOLVED] Обработано документов {len(resolvArray)}.'
+                        f' Осталось обработать {len(identifiersArray)}',
                         '#40ff00',
                         ''.join(resolvArray))
                               )
