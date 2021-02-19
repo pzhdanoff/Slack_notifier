@@ -172,16 +172,16 @@ def alerting():
             #                   )
             if not docQueue.empty():
                 requests.post(os.environ['HOOK_URL'], json={
-                                                            "color": '#FF0000',
-                                                            "text": f':boom: [ALERT] Не обработано документов:',
-                                                            "attachments": [
-                                                                {
-                                                                    "color": '#FF0000',
-                                                                    "text": f'Всего {docQueue.qsize()}'
-                                                                }
-                                                            ]
-                                                        }
-                                                    )
+                    "color": '#FF0000',
+                    "text": f':boom: [ALERT] Не обработано документов:',
+                    "attachments": [
+                        {
+                            "color": '#FF0000',
+                            "text": f'Всего {docQueue.qsize()}'
+                        }
+                    ]
+                }
+                              )
         except Exception as err:
             print(err)
         finally:
