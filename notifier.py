@@ -45,7 +45,7 @@ class GetDB:
         select = f"""select document_id, core_processing_end, action_id
                      from mdlp_meta.outcome_documents
                      where doc_status in ('CORE_PROCESSED_DOCUMENT')
-                     and doc_date::date = current_date and action_id not in (511, 10511);"""
+                     and (doc_date::date between current_date - 1 and current_date) and action_id not in (511);"""
         return select
 
     @staticmethod
@@ -53,7 +53,7 @@ class GetDB:
         select = """select document_id, core_processing_start, action_id
                     from mdlp_meta.outcome_documents
                     where doc_status in ('CORE_PROCESSING_DOCUMENT')
-                    and doc_date::date = current_date and action_id not in (511, 10511);"""
+                    and (doc_date::date between current_date - 1 and current_date) and action_id not in (511);"""
         return select
 
     @staticmethod
@@ -61,7 +61,7 @@ class GetDB:
         select = """select document_id, doc_date, action_id
                     from mdlp_meta.outcome_documents
                     where doc_status in ('PROCESSING_DOCUMENT')
-                    and doc_date::date = current_date and action_id not in (511, 10511);"""
+                    and (doc_date::date between current_date - 1 and current_date) and action_id not in (511);"""
         return select
 
     @staticmethod
@@ -69,7 +69,7 @@ class GetDB:
         select = """select document_id, doc_date, action_id
                     from mdlp_meta.outcome_documents
                     where doc_status in ('UPLOADING_DOCUMENT')
-                    and doc_date::date = current_date and link not ilike '%/opt/gluster%';"""
+                    and (doc_date::date between current_date - 1 and current_date) and link not ilike '%/opt/gluster%';"""
         return select
 
     @staticmethod
@@ -78,7 +78,7 @@ class GetDB:
                     from mdlp_meta.outcome_documents
                     where doc_business_error_desc ilike '%Некорректная операция (операция не может быть выполнена для указанных реквизитов)%'
                     and action_id not in (702)
-                    and doc_date::date = current_date;"""
+                    and (doc_date::date between current_date - 1 and current_date);"""
         return select
 
     @staticmethod
@@ -86,7 +86,8 @@ class GetDB:
         select = f"""select document_id, doc_status
                      from mdlp_meta.outcome_documents
                      where document_id = '{docId}'
-                     and doc_status in ('PROCESSED_DOCUMENT', 'FAILED_RESULT_READY');"""
+                     and doc_status in ('PROCESSED_DOCUMENT', 'FAILED_RESULT_READY')
+                     and doc_business_error_desc not ilike '%Некорректная операция (операция не может быть выполнена для указанных реквизитов)%';"""
         return select
 
 
@@ -96,6 +97,7 @@ def message(message, color, data) -> dict:
         "text": message,
         "attachments": [
             {
+                "title": message,
                 "color": color,
                 "text": data
             }
@@ -105,7 +107,7 @@ def message(message, color, data) -> dict:
 
 def attachBuilder(fetchArray: list, idArray: list):
     for row in fetchArray:
-        if row[1] < (datetime.now() - timedelta(minutes=30)):
+        if row[1] < (datetime.now() - timedelta(hours=1)):
             if row[2]:
                 idArray.append(f'xml_doc_id: {row[0]}, action_id: {row[2]}\n')
             else:
@@ -117,23 +119,37 @@ def alerting():
     db = GetDB('mdlp_db')
     while True:
         print('Alerting started')
-        coreProcessedIdArray = []
-        coreProcessingIdArray = []
+        fourErrorArray = []
         uploadingArray = []
         processingArray = []
-        # fourErrorArray = []
+        coreProcessedIdArray = []
+        coreProcessingIdArray = []
         connect = db.connection()
         curs = connect.cursor()
         try:
+            curs.execute(db.fourErrorDesc())
+            attachBuilder(curs.fetchall(), fourErrorArray)
+            if len(fourErrorArray) != 0:
+                requests.post(os.environ['HOOK_URL'], json=message(
+                        f":boom: [ALERT] Обнаружены документы с \'code: 4\'"
+                        f" в количестве {len(fourErrorArray)} шт.\n",
+                        '#FF0000',
+                        ''.join(fourErrorArray))
+                              )
             curs.execute(db.coreProcessedSelect())
             attachBuilder(curs.fetchall(), coreProcessedIdArray)
-            if len(coreProcessedIdArray) != 0:
+            if len(coreProcessedIdArray) != 0 and len(coreProcessedIdArray) <= 100:
                 requests.post(os.environ['HOOK_URL'], json=message(
                         f":boom: [ALERT] Обнаружены документы в статусе \'CORE_PROCESSED_DOCUMENT\'"
                         f" более 1 часа в количестве {len(coreProcessedIdArray)} шт.\n",
                         '#FF0000',
                         ''.join(coreProcessedIdArray))
                               )
+                # client.files_upload(channels='#automation',
+                #                     file='test.txt',
+                #                     initial_comment=f":boom: [ALERT] Обнаружены документы в статусе"
+                #                                     f" \'CORE_PROCESSED_DOCUMENT\'"
+                #                                     f" более 1 часа в количестве {len(coreProcessedIdArray)} шт.\n")
             curs.execute(db.coreProcessingSelect())
             attachBuilder(curs.fetchall(), coreProcessingIdArray)
             if len(coreProcessingIdArray) != 0:
@@ -161,25 +177,10 @@ def alerting():
                         '#FF0000',
                         ''.join(processingArray))
                               )
-            # curs.execute(db.fourErrorDesc())
-            # attachBuilder(curs.fetchall(), fourErrorArray)
-            # if len(fourErrorArray) != 0:
-            #     requests.post(os.environ['HOOK_URL'], json=message(
-            #             f":boom: [ALERT] Обнаружены документы с \'Ошибка 4\'"
-            #             f" в количестве {len(fourErrorArray)} шт.\n",
-            #             '#FF0000',
-            #             ''.join(fourErrorArray))
-            #                   )
             if not docQueue.empty():
                 requests.post(os.environ['HOOK_URL'], json={
                     "color": '#FF0000',
-                    "text": f':boom: [ALERT] Не обработано документов:',
-                    "attachments": [
-                        {
-                            "color": '#FF0000',
-                            "text": f'Всего {docQueue.qsize()}'
-                        }
-                    ]
+                    "text": f':boom: [ALERT] Всего обнаружено документов: {docQueue.qsize()}'
                 }
                               )
         except Exception as err:
