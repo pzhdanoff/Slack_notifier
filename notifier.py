@@ -10,6 +10,7 @@ from queue import Queue
 from time import sleep
 import psycopg2 as pg
 import requests
+import sys
 import os
 
 config = ConfigParser()
@@ -41,39 +42,15 @@ class GetDB:
         return connection
 
     @staticmethod
-    def coreProcessedSelect() -> str:
-        select = f"""select document_id, core_processing_end, action_id
-                     from mdlp_meta.outcome_documents
-                     where doc_status in ('CORE_PROCESSED_DOCUMENT')
-                     and (doc_date::date between current_date - 1 and current_date) and action_id not in (511);"""
+    def searchDocSelect(dateFmt, status, searchOption) -> str:
+        select = f"""select document_id, {dateFmt}, action_id
+                         from mdlp_meta.outcome_documents
+                         where doc_status in ('{status}')
+                         and (doc_date::date between current_date - 1 and current_date) {searchOption};"""
         return select
 
     @staticmethod
-    def coreProcessingSelect() -> str:
-        select = """select document_id, core_processing_start, action_id
-                    from mdlp_meta.outcome_documents
-                    where doc_status in ('CORE_PROCESSING_DOCUMENT')
-                    and (doc_date::date between current_date - 1 and current_date) and action_id not in (511);"""
-        return select
-
-    @staticmethod
-    def processingSelect() -> str:
-        select = """select document_id, doc_date, action_id
-                    from mdlp_meta.outcome_documents
-                    where doc_status in ('PROCESSING_DOCUMENT')
-                    and (doc_date::date between current_date - 1 and current_date) and action_id not in (511);"""
-        return select
-
-    @staticmethod
-    def uploadingSelect() -> str:
-        select = """select document_id, doc_date, action_id
-                    from mdlp_meta.outcome_documents
-                    where doc_status in ('UPLOADING_DOCUMENT')
-                    and (doc_date::date between current_date - 1 and current_date) and link not ilike '%/opt/gluster%';"""
-        return select
-
-    @staticmethod
-    def fourErrorDesc():
+    def fourErrorDesc() -> str:
         select = """select document_id, doc_date, action_id
                     from mdlp_meta.outcome_documents
                     where doc_business_error_desc ilike '%Некорректная операция (операция не может быть выполнена для указанных реквизитов)%'
@@ -87,7 +64,8 @@ class GetDB:
                      from mdlp_meta.outcome_documents
                      where document_id = '{docId}'
                      and doc_status in ('PROCESSED_DOCUMENT', 'FAILED_RESULT_READY')
-                     and doc_business_error_desc not ilike '%Некорректная операция (операция не может быть выполнена для указанных реквизитов)%';"""
+                     and (doc_business_error_desc not ilike '%Некорректная операция (операция не может быть выполнена для указанных реквизитов)%'
+                     or doc_business_error_desc is null);"""
         return select
 
 
@@ -97,7 +75,6 @@ def message(message, color, data) -> dict:
         "text": message,
         "attachments": [
             {
-                "title": message,
                 "color": color,
                 "text": data
             }
@@ -118,7 +95,7 @@ def attachBuilder(fetchArray: list, idArray: list):
 def alerting():
     db = GetDB('mdlp_db')
     while True:
-        print('Alerting started')
+        failedArray = []
         fourErrorArray = []
         uploadingArray = []
         processingArray = []
@@ -136,21 +113,27 @@ def alerting():
                         '#FF0000',
                         ''.join(fourErrorArray))
                               )
-            curs.execute(db.coreProcessedSelect())
+            curs.execute(db.searchDocSelect('doc_date', 'FAILED', 'and action_id not in (511)'))
+            attachBuilder(curs.fetchall(), failedArray)
+            if len(failedArray) != 0 and len(failedArray) <= 100:
+                requests.post(os.environ['HOOK_URL'], json=message(
+                        f":boom: [ALERT] Обнаружены документы в статусе \'FAILED\'"
+                        f" более 1 часа в количестве {len(failedArray)} шт.\n",
+                        '#FF0000',
+                        ''.join(failedArray))
+                              )
+            curs.execute(
+                db.searchDocSelect('core_processing_end', 'CORE_PROCESSED_DOCUMENT', 'and action_id not in (511)'))
             attachBuilder(curs.fetchall(), coreProcessedIdArray)
-            if len(coreProcessedIdArray) != 0 and len(coreProcessedIdArray) <= 100:
+            if len(coreProcessedIdArray) != 0:
                 requests.post(os.environ['HOOK_URL'], json=message(
                         f":boom: [ALERT] Обнаружены документы в статусе \'CORE_PROCESSED_DOCUMENT\'"
                         f" более 1 часа в количестве {len(coreProcessedIdArray)} шт.\n",
                         '#FF0000',
                         ''.join(coreProcessedIdArray))
                               )
-                # client.files_upload(channels='#automation',
-                #                     file='test.txt',
-                #                     initial_comment=f":boom: [ALERT] Обнаружены документы в статусе"
-                #                                     f" \'CORE_PROCESSED_DOCUMENT\'"
-                #                                     f" более 1 часа в количестве {len(coreProcessedIdArray)} шт.\n")
-            curs.execute(db.coreProcessingSelect())
+            curs.execute(
+                db.searchDocSelect('core_processing_start', 'CORE_PROCESSING_DOCUMENT', 'and action_id not in (511)'))
             attachBuilder(curs.fetchall(), coreProcessingIdArray)
             if len(coreProcessingIdArray) != 0:
                 requests.post(os.environ['HOOK_URL'], json=message(
@@ -159,7 +142,7 @@ def alerting():
                         '#FF0000',
                         ''.join(coreProcessingIdArray))
                               )
-            curs.execute(db.uploadingSelect())
+            curs.execute(db.searchDocSelect('doc_date', 'UPLOADING_DOCUMENT', "and link not ilike '%/opt/gluster%'"))
             attachBuilder(curs.fetchall(), uploadingArray)
             if len(uploadingArray) != 0:
                 requests.post(os.environ['HOOK_URL'], json=message(
@@ -168,7 +151,7 @@ def alerting():
                         '#FF0000',
                         ''.join(uploadingArray))
                               )
-            curs.execute(db.processingSelect())
+            curs.execute(db.searchDocSelect('doc_date', 'PROCESSING_DOCUMENT', 'and action_id not in (511)'))
             attachBuilder(curs.fetchall(), processingArray)
             if len(processingArray) != 0:
                 requests.post(os.environ['HOOK_URL'], json=message(
@@ -183,19 +166,18 @@ def alerting():
                     "text": f':boom: [ALERT] Всего обнаружено документов: {docQueue.qsize()}'
                 }
                               )
-        except Exception as err:
-            print(err)
+        except Exception:
+            sys.exit(1)
         finally:
             curs.close()
             connect.close()
-        sleep(60)
+        sleep(1800)
 
 
 def resolving():
     global identifiersArray
     dataBase = GetDB('mdlp_db')
     while True:
-        print('Resolving started')
         if not docQueue.empty():
             for item in range(docQueue.qsize()):
                 identifiersArray.add(docQueue.get())
@@ -211,8 +193,8 @@ def resolving():
                     if row:
                         resolvArray.append(f'xml_doc_id: {row[0]}\n')
                         identifiersArray.remove(item)
-            except Exception as err:
-                print(err)
+            except Exception:
+                sys.exit(1)
             finally:
                 curs.close()
                 connect.close()
@@ -223,7 +205,7 @@ def resolving():
                         '#40ff00',
                         ''.join(resolvArray))
                               )
-        sleep(30)
+        sleep(300)
 
 
 if __name__ == '__main__':
