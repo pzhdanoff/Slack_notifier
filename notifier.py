@@ -115,7 +115,7 @@ def alerting():
                               )
             curs.execute(db.searchDocSelect('doc_date', 'FAILED', 'and action_id not in (511)'))
             attachBuilder(curs.fetchall(), failedArray)
-            if len(failedArray) != 0 and len(failedArray) <= 100:
+            if len(failedArray) != 0:
                 requests.post(os.environ['HOOK_URL'], json=message(
                         f":boom: [ALERT] Обнаружены документы в статусе \'FAILED\'"
                         f" более 1 часа в количестве {len(failedArray)} шт.\n",
